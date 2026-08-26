@@ -37,7 +37,6 @@ ditto -c -k --keepParent "out/Default/Chromium.app" "notarize.zip"
 
 # Notarize the app
 xcrun notarytool store-credentials "notarytool-profile" --apple-id "$PROD_MACOS_NOTARIZATION_APPLE_ID" --team-id "$PROD_MACOS_NOTARIZATION_TEAM_ID" --password "$PROD_MACOS_NOTARIZATION_PWD"
-echo "Submitting notarize.zip for notarization and waiting for completion..."
 notary_submit_output="$(xcrun notarytool submit "notarize.zip" --keychain-profile "notarytool-profile" --wait --output-format json)"
 notary_status="$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("status",""))' <<< "$notary_submit_output")"
 notary_submission_id="$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("id",""))' <<< "$notary_submit_output")"
@@ -51,26 +50,14 @@ if [[ "$notary_status" != "Accepted" ]]; then
   exit 1
 fi
 
-echo "Notarization accepted (id: $notary_submission_id)."
-
-staple_max_attempts=5
-staple_retry_delay_seconds=30
-staple_attempt=1
-while true; do
-  echo "Stapling out/Default/Chromium.app (attempt ${staple_attempt}/${staple_max_attempts})..."
-  if xcrun stapler staple "out/Default/Chromium.app"; then
-    break
+if ! xcrun stapler staple "out/Default/Chromium.app"; then
+  echo "Stapling failed."
+  if [[ -n "$notary_submission_id" ]]; then
+    echo "Fetching notarization log for submission $notary_submission_id..."
+    xcrun notarytool log "$notary_submission_id" --keychain-profile "notarytool-profile" || true
   fi
-
-  if (( staple_attempt >= staple_max_attempts )); then
-    echo "Stapling failed after ${staple_max_attempts} attempts."
-    exit 1
-  fi
-
-  echo "Stapling failed; retrying in ${staple_retry_delay_seconds}s to allow ticket propagation..."
-  sleep "$staple_retry_delay_seconds"
-  staple_attempt=$((staple_attempt + 1))
-done
+  exit 1
+fi
 
 xcrun stapler validate "out/Default/Chromium.app"
 
